@@ -13,6 +13,7 @@ import numpy as np
 import os
 from torch.utils.tensorboard import SummaryWriter
 from itertools import cycle
+from tqdm import tqdm
 
 def train(args, model, device, train_loader, optimizer, m, labeled_len, epoch, tf_writer):
     model.train()
@@ -23,7 +24,7 @@ def train(args, model, device, train_loader, optimizer, m, labeled_len, epoch, t
     ce_losses = AverageMeter('ce_loss', ':.4e')
     entropy_losses = AverageMeter('entropy_loss', ':.4e')
 
-    for batch_idx, ((x, x2), combined_target, idx) in enumerate(train_loader):
+    for batch_idx, ((x, x2), combined_target, idx) in enumerate(tqdm(train_loader)):
         
         target = combined_target[:labeled_len]
         x, x2, target = x.to(device), x2.to(device), target.to(device)
@@ -167,14 +168,14 @@ if __name__ == "__main__":
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
 
-    train_label_set = datasets.ImageNetDataset(root=args.dataset_root, anno_file='./data/ImageNet100_label_{}_{:.1f}.txt'.format(args.labeled_num, args.labeled_ratio), transform=TransformTwice(transform_train))
-    train_unlabel_set = datasets.ImageNetDataset(root=args.dataset_root, anno_file='./data/ImageNet100_unlabel_{}_{:.1f}.txt'.format(args.labeled_num, args.labeled_ratio), transform=TransformTwice(transform_train))
+    train_label_set = datasets.ImageNetDataset(root=args.dataset_root, anno_file='./data/imagenet100small_train_label_{}_{:.1f}.txt'.format(args.labeled_num, args.labeled_ratio), transform=TransformTwice(transform_train))
+    train_unlabel_set = datasets.ImageNetDataset(root=args.dataset_root, anno_file='./data/imagenet100small_train_unlabel_{}_{:.1f}.txt'.format(args.labeled_num, args.labeled_ratio), transform=TransformTwice(transform_train))
     concat_set = datasets.ConcatDataset((train_label_set, train_unlabel_set))
     labeled_idxs = range(len(train_label_set)) 
     unlabeled_idxs = range(len(train_label_set), len(train_label_set)+len(train_unlabel_set))
     batch_sampler = datasets.TwoStreamBatchSampler(labeled_idxs, unlabeled_idxs, args.batch_size, int(args.batch_size * len(train_unlabel_set) / (len(train_label_set) + len(train_unlabel_set))))
 
-    test_unlabel_set = datasets.ImageNetDataset(root=args.dataset_root, anno_file='./data/ImageNet100_unlabel_50_0.5.txt', transform=transform_test)
+    test_unlabel_set = datasets.ImageNetDataset(root=args.dataset_root, anno_file='./data/imagenet100small_test_50_0.5.txt', transform=transform_test)
 
     train_loader = torch.utils.data.DataLoader(concat_set, batch_sampler=batch_sampler, num_workers=8)
     test_loader = torch.utils.data.DataLoader(test_unlabel_set, batch_size=args.batch_size, shuffle=False, num_workers=8)
