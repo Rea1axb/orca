@@ -1,3 +1,7 @@
-CUDA_VISIBLE_DEVICES=2 python orca_imagenet.py \
+NAME='imagenet100'
+SAVE_DIR=./results/${NAME}
+
+CUDA_VISIBLE_DEVICES=0 python orca_imagenet.py \
     --dataset_root '../../../data/imagenet100_small' \
-    --name 'imagenet100'
+    --name ${NAME} \
+    > ${SAVE_DIR}/logfile.out

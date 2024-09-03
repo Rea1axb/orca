@@ -7,7 +7,7 @@ import torch.optim as optim
 import models
 import open_world_imagenet as datasets
 import torchvision.transforms as transforms
-from utils import cluster_acc, AverageMeter, entropy, MarginLoss, accuracy, TransformTwice
+from utils import cluster_acc, AverageMeter, entropy, MarginLoss, accuracy, TransformTwice, split_cluster_acc_v2
 from sklearn import metrics
 import numpy as np
 import os
@@ -100,12 +100,28 @@ def test(args, model, labeled_num, device, test_loader, epoch, tf_writer):
     preds = preds.astype(int)
     seen_mask = targets < labeled_num
     unseen_mask = ~seen_mask
-    overall_acc = cluster_acc(preds, targets)
-    seen_acc = accuracy(preds[seen_mask], targets[seen_mask])
-    unseen_acc = cluster_acc(preds[unseen_mask], targets[unseen_mask])
+
+    overall_acc, seen_acc, unseen_acc, ind, w = split_cluster_acc_v2(targets, preds, seen_mask, return_ind=True)
+    
+    overall_acc_v1 = cluster_acc(preds, targets)
+    seen_acc_v1 = accuracy(preds[seen_mask], targets[seen_mask])
+    unseen_acc_v1 = cluster_acc(preds[unseen_mask], targets[unseen_mask])
+    
+    save_dict = {
+        'preds': preds,
+        'targets': targets,
+        'confs': confs,
+        'epoch': epoch + 1,
+        'ind': ind,
+        'w': w
+    }
+    save_path = os.path.join(args.savedir, f'result.pt')
+    torch.save(save_dict, save_path)
+
     unseen_nmi = metrics.normalized_mutual_info_score(targets[unseen_mask], preds[unseen_mask])
     mean_uncert = 1 - np.mean(confs)
-    print('Test overall acc {:.4f}, label acc {:.4f}, unlabel acc {:.4f}'.format(overall_acc, seen_acc, unseen_acc))
+    print(f'Epoch {epoch}: Test v1 overall acc {overall_acc_v1:.4f}, label acc {seen_acc_v1:.4f}, unlabel acc {unseen_acc_v1:.4f}')
+    print(f'Epoch {epoch}: Test v2 overall acc {overall_acc:.4f}, label acc {seen_acc:.4f}, unlabel acc {unseen_acc:.4f}')
     tf_writer.add_scalar('acc/overall', overall_acc, epoch)
     tf_writer.add_scalar('acc/seen', seen_acc, epoch)
     tf_writer.add_scalar('acc/unseen', unseen_acc, epoch)
