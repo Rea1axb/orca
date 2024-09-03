@@ -6,12 +6,13 @@ import torch.nn.functional as F
 import torch.optim as optim
 import models
 import open_world_cifar as datasets
-from utils import cluster_acc, AverageMeter, entropy, MarginLoss, accuracy, TransformTwice
+from utils import cluster_acc, AverageMeter, entropy, MarginLoss, accuracy, TransformTwice, split_cluster_acc_v2
 from sklearn import metrics
 import numpy as np
 import os
 from torch.utils.tensorboard import SummaryWriter
 from itertools import cycle
+from tqdm import tqdm
 
 
 def train(args, model, device, train_label_loader, train_unlabel_loader, optimizer, m, epoch, tf_writer):
@@ -24,7 +25,7 @@ def train(args, model, device, train_label_loader, train_unlabel_loader, optimiz
     ce_losses = AverageMeter('ce_loss', ':.4e')
     entropy_losses = AverageMeter('entropy_loss', ':.4e')
 
-    for batch_idx, ((x, x2), target) in enumerate(train_label_loader):
+    for batch_idx, ((x, x2), target) in enumerate(tqdm(train_label_loader)):
         
         ((ux, ux2), _) = next(unlabel_loader_iter)
 
@@ -105,12 +106,29 @@ def test(args, model, labeled_num, device, test_loader, epoch, tf_writer):
 
     seen_mask = targets < labeled_num
     unseen_mask = ~seen_mask
-    overall_acc = cluster_acc(preds, targets)
-    seen_acc = accuracy(preds[seen_mask], targets[seen_mask])
-    unseen_acc = cluster_acc(preds[unseen_mask], targets[unseen_mask])
+
+    overall_acc, seen_acc, unseen_acc, ind, w = split_cluster_acc_v2(targets, preds, seen_mask, return_ind=True)
+
+    overall_acc_v1 = cluster_acc(preds, targets)
+    seen_acc_v1 = accuracy(preds[seen_mask], targets[seen_mask])
+    unseen_acc_v1 = cluster_acc(preds[unseen_mask], targets[unseen_mask])
+
+    save_dict = {
+        'preds': preds,
+        'targets': targets,
+        'confs': confs,
+        'epoch': epoch + 1,
+        'ind': ind,
+        'w': w
+    }
+    save_path = os.path.join(args.savedir, f'result.pt')
+    torch.save(save_dict, save_path)
+
     unseen_nmi = metrics.normalized_mutual_info_score(targets[unseen_mask], preds[unseen_mask])
     mean_uncert = 1 - np.mean(confs)
-    print('Test overall acc {:.4f}, seen acc {:.4f}, unseen acc {:.4f}'.format(overall_acc, seen_acc, unseen_acc))
+    # print('Test overall acc {:.4f}, seen acc {:.4f}, unseen acc {:.4f}'.format(overall_acc, seen_acc, unseen_acc))
+    print(f'Epoch {epoch}: Test v1 overall acc {overall_acc_v1:.4f}, label acc {seen_acc_v1:.4f}, unlabel acc {unseen_acc_v1:.4f}')
+    print(f'Epoch {epoch}: Test v2 overall acc {overall_acc:.4f}, label acc {seen_acc:.4f}, unlabel acc {unseen_acc:.4f}')
     tf_writer.add_scalar('acc/overall', overall_acc, epoch)
     tf_writer.add_scalar('acc/seen', seen_acc, epoch)
     tf_writer.add_scalar('acc/unseen', unseen_acc, epoch)
@@ -126,6 +144,7 @@ def main():
     parser.add_argument('--labeled-num', default=50, type=int)
     parser.add_argument('--labeled-ratio', default=0.5, type=float)
     parser.add_argument('--seed', type=int, default=1, metavar='S', help='random seed (default: 1)')
+    parser.add_argument('--dataset_root', type=str)
     parser.add_argument('--name', type=str, default='debug')
     parser.add_argument('--exp_root', type=str, default='./results/')
     parser.add_argument('--epochs', type=int, default=200)
@@ -140,15 +159,18 @@ def main():
     if not os.path.exists(args.savedir):
         os.makedirs(args.savedir)
 
+    # data_root = '../../../data/CIFAR100'
+
     if args.dataset == 'cifar10':
-        train_label_set = datasets.OPENWORLDCIFAR10(root='./datasets', labeled=True, labeled_num=args.labeled_num, labeled_ratio=args.labeled_ratio, download=True, transform=TransformTwice(datasets.dict_transform['cifar_train']))
-        train_unlabel_set = datasets.OPENWORLDCIFAR10(root='./datasets', labeled=False, labeled_num=args.labeled_num, labeled_ratio=args.labeled_ratio, download=True, transform=TransformTwice(datasets.dict_transform['cifar_train']), unlabeled_idxs=train_label_set.unlabeled_idxs)
-        test_set = datasets.OPENWORLDCIFAR10(root='./datasets', labeled=False, labeled_num=args.labeled_num, labeled_ratio=args.labeled_ratio, download=True, transform=datasets.dict_transform['cifar_test'], unlabeled_idxs=train_label_set.unlabeled_idxs)
+        train_label_set = datasets.OPENWORLDCIFAR10(root=args.dataset_root, labeled=True, labeled_num=args.labeled_num, labeled_ratio=args.labeled_ratio, download=True, transform=TransformTwice(datasets.dict_transform['cifar_train']))
+        train_unlabel_set = datasets.OPENWORLDCIFAR10(root=args.dataset_root, labeled=False, labeled_num=args.labeled_num, labeled_ratio=args.labeled_ratio, download=True, transform=TransformTwice(datasets.dict_transform['cifar_train']), unlabeled_idxs=train_label_set.unlabeled_idxs)
+        test_set = datasets.OPENWORLDCIFAR10(root=args.dataset_root, labeled=False, labeled_num=args.labeled_num, labeled_ratio=args.labeled_ratio, download=True, transform=datasets.dict_transform['cifar_test'], unlabeled_idxs=train_label_set.unlabeled_idxs)
         num_classes = 10
     elif args.dataset == 'cifar100':
-        train_label_set = datasets.OPENWORLDCIFAR100(root='./datasets', labeled=True, labeled_num=args.labeled_num, labeled_ratio=args.labeled_ratio, download=True, transform=TransformTwice(datasets.dict_transform['cifar_train']))
-        train_unlabel_set = datasets.OPENWORLDCIFAR100(root='./datasets', labeled=False, labeled_num=args.labeled_num, labeled_ratio=args.labeled_ratio, download=True, transform=TransformTwice(datasets.dict_transform['cifar_train']), unlabeled_idxs=train_label_set.unlabeled_idxs)
-        test_set = datasets.OPENWORLDCIFAR100(root='./datasets', labeled=False, labeled_num=args.labeled_num, labeled_ratio=args.labeled_ratio, download=True, transform=datasets.dict_transform['cifar_test'], unlabeled_idxs=train_label_set.unlabeled_idxs)
+        train_classes = range(50)
+        train_label_set = datasets.OPENWORLDCIFAR100(root=args.dataset_root, labeled=True, train_classes=train_classes, labeled_ratio=args.labeled_ratio, download=True, transform=TransformTwice(datasets.dict_transform['cifar_train']))
+        train_unlabel_set = datasets.OPENWORLDCIFAR100(root=args.dataset_root, labeled=False, train_classes=train_classes, labeled_ratio=args.labeled_ratio, download=True, transform=TransformTwice(datasets.dict_transform['cifar_train']), unlabeled_idxs=train_label_set.unlabeled_idxs)
+        test_set = datasets.OPENWORLDCIFAR100(root=args.dataset_root, labeled=False, train_classes=train_classes, labeled_ratio=args.labeled_ratio, download=True, train=False, transform=datasets.dict_transform['cifar_test'])
         num_classes = 100
     else:
         warnings.warn('Dataset is not listed')
